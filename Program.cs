@@ -1,8 +1,8 @@
 ﻿using System.Diagnostics;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
+using System.Text.Json;
 
-const string TargetFileName = @"C:\Projects\Rubber-Monkey\Source\RubberMonkey.Sales.Data\Admin\OrderDal_Cancellation.cs";
+const string TargetSolution = @"C:\Projects\roslyn\Roslyn.sln";
+const string TargetFileName = @"C:\Projects\roslyn\src\Compilers\CSharp\Test\Semantic\Semantics\NullableReferenceTypesTests.cs";
 
 var testsRemaining = 5;
 
@@ -13,12 +13,14 @@ var solutionLoadTimer = new Stopwatch();
 
 var fileChangeDiagnosticTimer = new Stopwatch();
 
+Console.WriteLine("Starting Omnisharp");
+
 using var proc = Process.Start(new ProcessStartInfo()
 {
-    WorkingDirectory = @"C:\Projects\Rubber-Monkey\Source",
+    WorkingDirectory = Path.GetDirectoryName(TargetSolution),
     FileName = @"C:\Projects\neoGeneva\omnisharp-roslyn\artifacts\publish\OmniSharp.Stdio.Driver\win7-x64\net472\OmniSharp.exe",
     Arguments = "-z "
-        + @"-s C:\Projects\Rubber-Monkey\Source\RubberMonkey.Sales.sln "
+        + $"-s {TargetSolution} "
         + $"--hostPID {Environment.ProcessId} "
         + "DotNet:enablePackageRestore=false "
         + "--encoding utf-8 "
@@ -31,7 +33,7 @@ using var proc = Process.Start(new ProcessStartInfo()
         + "FileOptions:SystemExcludeSearchPatterns:4=**/.DS_Store "
         + "FileOptions:SystemExcludeSearchPatterns:5=**/Thumbs.db "
         + "RoslynExtensionsOptions:EnableAnalyzersSupport=true "
-        + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
+        // + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
         + "FormattingOptions:EnableEditorConfigSupport=true "
         + "FormattingOptions:OrganizeImports=true "
         + "formattingOptions:useTabs=false "
@@ -59,13 +61,13 @@ var outputThread = Task.Run(async () =>
             if (line is null)
                 continue;
 
-            var parsed = JsonConvert.DeserializeObject<JObject>(line);
+            var parsed = JsonSerializer.Deserialize<AllData>(line);
 
             if (parsed is null)
                 continue;
 
-            seq = parsed.Value<int>("Seq");
-            var ev = parsed.Value<string?>("Event");
+            seq = parsed.Seq ?? seq;
+            var ev = parsed.Event;
 
             if (ev == "MsBuildProjectDiagnostics")
                 OnProjectInit(parsed);
@@ -80,7 +82,7 @@ var outputThread = Task.Run(async () =>
                 OnDiagnostic(parsed);
 
             if (ev != "log")
-                Debug.WriteLine(line);
+                Debug.WriteLine(ev);
         }
     }
     catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -108,9 +110,9 @@ await outputThread;
 
 proc.Close();
 
-void OnProjectInit(JObject parsed)
+void OnProjectInit(AllData parsed)
 {
-    var fileName = parsed.SelectToken("$.Body.FileName")?.Value<string>();
+    var fileName = parsed.Body.FileName;
 
     if (fileName == null)
         throw new InvalidOperationException("No files name");
@@ -118,15 +120,12 @@ void OnProjectInit(JObject parsed)
     fileNames.Add(fileName);
 }
 
-void OnProjectAdded(JObject parsed)
+void OnProjectAdded(AllData parsed)
 {
-    if (fileNames.Count == 0)
-        throw new InvalidOperationException("No files found");
-
-    var fileName = parsed.SelectToken("$.Body.MsBuildProject.Path")?.Value<string>();
+    var fileName = parsed.Body.MsBuildProject.Path;
 
     if (fileName == null)
-        throw new InvalidOperationException("No files name");
+        return;
 
     if (!fileNames.Remove(fileName))
         throw new InvalidOperationException("File not found");
@@ -144,9 +143,9 @@ void OnSolutionReady()
     RequestCodeCheck();
 }
 
-void OnDiagnosticStatus(JObject parsed)
+void OnDiagnosticStatus(AllData parsed)
 {
-    var numberFilesRemaining = parsed.SelectToken("$.Body.NumberFilesRemaining")?.Value<int?>();
+    var numberFilesRemaining = parsed.Body.NumberFilesRemaining;
 
     if (numberFilesRemaining == null)
         throw new InvalidOperationException("Null files remaining");
@@ -164,7 +163,7 @@ void RequestCodeCheck()
 {
     Console.WriteLine($"Code check: {TargetFileName}");
 
-    proc.StandardInput.WriteLine(JsonConvert.SerializeObject(new
+    proc.StandardInput.WriteLine(JsonSerializer.Serialize(new
     {
         Type = "request",
         Seq = seq + 1,
@@ -182,7 +181,7 @@ void ChangeFile()
 
     fileChangeDiagnosticTimer.Restart();
 
-    proc.StandardInput.WriteLine(JsonConvert.SerializeObject(new
+    proc.StandardInput.WriteLine(JsonSerializer.Serialize(new
     {
         Type = "request",
         Seq = seq + 1,
@@ -202,7 +201,7 @@ void OpenFile()
 {
     Console.WriteLine($"Open: {TargetFileName}");
 
-    proc.StandardInput.WriteLine(JsonConvert.SerializeObject(new
+    proc.StandardInput.WriteLine(JsonSerializer.Serialize(new
     {
         Type = "request",
         Seq = seq + 1,
@@ -215,12 +214,12 @@ void OpenFile()
     }));
 }
 
-void OnDiagnostic(JObject parsed)
+void OnDiagnostic(AllData parsed)
 {
     if (!fileChangeDiagnosticTimer.IsRunning)
         return;
 
-    var fileNames = parsed.SelectTokens("$.Body.Results[*].FileName")?.Select(x => x.Value<string?>());
+    var fileNames = parsed.Body.Results.Select(x => x.FileName).ToArray();
 
     if (fileNames != null)
     {
@@ -239,4 +238,29 @@ void OnDiagnostic(JObject parsed)
             }
         }
     }
+}
+
+class AllData
+{
+    public string? Event { get; set; }
+    public int? Seq { get; set; }
+    public AllDataBody? Body { get; set; }
+}
+
+class AllDataBody
+{
+    public int? NumberFilesRemaining { get; set; }
+    public AllDataBodyResults[]? Results { get; set; }
+    public MSBuildProject? MsBuildProject { get; set; }
+    public string? FileName { get; set; }
+}
+
+class AllDataBodyResults
+{
+    public string? FileName { get; set; }
+}
+
+class MSBuildProject
+{
+    public string? Path { get; set; }
 }
