@@ -10,6 +10,7 @@ var initTimer = new Stopwatch();
 initTimer.Start();
 
 var solutionLoadTimer = new Stopwatch();
+var hasPrasedSolution = false;
 
 var fileChangeDiagnosticTimer = new Stopwatch();
 
@@ -33,7 +34,7 @@ using var proc = Process.Start(new ProcessStartInfo()
         + "FileOptions:SystemExcludeSearchPatterns:4=**/.DS_Store "
         + "FileOptions:SystemExcludeSearchPatterns:5=**/Thumbs.db "
         + "RoslynExtensionsOptions:EnableAnalyzersSupport=true "
-        + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
+        // + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
         + "FormattingOptions:EnableEditorConfigSupport=true "
         + "FormattingOptions:OrganizeImports=true "
         + "formattingOptions:useTabs=false "
@@ -150,13 +151,18 @@ void OnDiagnosticStatus(AllData parsed)
     if (numberFilesRemaining == null)
         throw new InvalidOperationException("Null files remaining");
 
-    if (numberFilesRemaining == 0)
+    if (numberFilesRemaining == 0 && hasPrasedSolution && solutionLoadTimer.IsRunning)
     {
+        solutionLoadTimer.Stop();
+
         Console.WriteLine("Solution Load Time: " + solutionLoadTimer.Elapsed);
 
         OpenFile();
         ChangeFile();
     }
+
+    if (numberFilesRemaining > 0)
+        hasPrasedSolution = true;
 }
 
 void RequestCodeCheck()
