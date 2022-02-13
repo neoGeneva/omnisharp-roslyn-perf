@@ -2,7 +2,7 @@
 using System.Text.Json;
 
 const string TargetSolution = @"C:\Projects\roslyn\Roslyn.sln";
-const string TargetFileName = @"C:\Projects\roslyn\src\Compilers\CSharp\Test\Semantic\Semantics\NullableReferenceTypesTests.cs";
+const string TargetFileName = @"C:\Projects\roslyn\src\Compilers\CSharp\Test\Symbol\Symbols\DefaultInterfaceImplementationTests.cs";
 
 var testsRemaining = 5;
 
@@ -33,7 +33,7 @@ using var proc = Process.Start(new ProcessStartInfo()
         + "FileOptions:SystemExcludeSearchPatterns:4=**/.DS_Store "
         + "FileOptions:SystemExcludeSearchPatterns:5=**/Thumbs.db "
         + "RoslynExtensionsOptions:EnableAnalyzersSupport=true "
-        // + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
+        + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
         + "FormattingOptions:EnableEditorConfigSupport=true "
         + "FormattingOptions:OrganizeImports=true "
         + "formattingOptions:useTabs=false "
