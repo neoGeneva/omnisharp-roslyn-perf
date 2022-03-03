@@ -1,10 +1,16 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
+using omnisharp_roslyn_perf;
 
-const string TargetSolution = @"C:\Projects\roslyn\Roslyn.sln";
-const string TargetFileName = @"C:\Projects\roslyn\src\Compilers\CSharp\Test\Symbol\Symbols\DefaultInterfaceImplementationTests.cs";
+const int ExpectedDiagnosticCount = 1;
+// const string TargetSolution = @"C:\Projects\roslyn\Roslyn.sln";
+// const string TargetFileName = @"C:\Projects\roslyn\src\Compilers\CSharp\Test\Symbol\Symbols\DefaultInterfaceImplementationTests.cs";
+
+const string TargetSolution = @"C:\Projects\Rubber-Monkey\Source\RubberMonkey.Sales.sln";
+const string TargetFileName = @"C:\Projects\Rubber-Monkey\Source\RubberMonkey.Sales.Data\Admin\OrderDal_Cancellation.cs";
 
 var testsRemaining = 5;
+var currentDiagnosticCount = 0;
 
 var initTimer = new Stopwatch();
 initTimer.Start();
@@ -19,14 +25,22 @@ Console.WriteLine("Starting Omnisharp");
 using var proc = Process.Start(new ProcessStartInfo()
 {
     WorkingDirectory = Path.GetDirectoryName(TargetSolution),
-    FileName = @"C:\Projects\neoGeneva\omnisharp-roslyn\artifacts\publish\OmniSharp.Stdio.Driver\win7-x64\net472\OmniSharp.exe",
-    Arguments = "-z "
+    // FileName = @"C:\Projects\neoGeneva\omnisharp-roslyn\artifacts\publish\OmniSharp.Stdio.Driver\win7-x64\net472\OmniSharp.exe",
+    // FileName = @"C:\Projects\neoGeneva\omnisharp-roslyn\bin\Release\OmniSharp.Stdio.Driver\net472\OmniSharp.exe",
+    FileName = @"C:\Projects\neoGeneva\omnisharp-roslyn\bin\Release\OmniSharp.Stdio.Driver\net6.0\OmniSharp.exe",
+    // FileName = "dotnet",
+    // FileName = "dotnet-counters",
+    Arguments =
+        // "collect --output counters.csv -- dotnet " +
+        // @"C:\Projects\neoGeneva\omnisharp-roslyn\bin\Release\OmniSharp.Stdio.Driver\net6.0\OmniSharp.dll " +
+        "-z "
         + $"-s {TargetSolution} "
         + $"--hostPID {Environment.ProcessId} "
         + "DotNet:enablePackageRestore=false "
         + "--encoding utf-8 "
         + "--loglevel debug "
-        + @"--plugin c:\Users\phil\.vscode\extensions\ms-dotnettools.csharp-1.24.0\.razor\OmniSharpPlugin\Microsoft.AspNetCore.Razor.OmniSharpPlugin.dll "
+        // + "--debug "
+        // + @"--plugin c:\Users\phil\.vscode\extensions\ms-dotnettools.csharp-1.24.0\.razor\OmniSharpPlugin\Microsoft.AspNetCore.Razor.OmniSharpPlugin.dll "
         + "FileOptions:SystemExcludeSearchPatterns:0=**/.git "
         + "FileOptions:SystemExcludeSearchPatterns:1=**/.svn "
         + "FileOptions:SystemExcludeSearchPatterns:2=**/.hg "
@@ -34,7 +48,7 @@ using var proc = Process.Start(new ProcessStartInfo()
         + "FileOptions:SystemExcludeSearchPatterns:4=**/.DS_Store "
         + "FileOptions:SystemExcludeSearchPatterns:5=**/Thumbs.db "
         + "RoslynExtensionsOptions:EnableAnalyzersSupport=true "
-        // + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
+        + "RoslynExtensionsOptions:AnalyzeOpenDocumentsOnly=true "
         + "FormattingOptions:EnableEditorConfigSupport=true "
         + "FormattingOptions:OrganizeImports=true "
         + "formattingOptions:useTabs=false "
@@ -44,6 +58,8 @@ using var proc = Process.Start(new ProcessStartInfo()
     RedirectStandardOutput = true,
     RedirectStandardError = true
 }) ?? throw new Exception("Could not start OmniSharp");
+
+using var counters = Counters.Start(proc.Id);
 
 var cts = new CancellationTokenSource();
 var seq = 0;
@@ -76,13 +92,17 @@ var outputThread = Task.Run(async () =>
             if (ev == "ProjectAdded")
                 OnProjectAdded(parsed);
 
-            if (ev == "BackgroundDiagnosticStatus")
-                OnDiagnosticStatus(parsed);
-
             if (ev == "Diagnostic")
                 OnDiagnostic(parsed);
 
-            if (ev != "log")
+            // if (ev == "log")
+            //     Debug.WriteLine(line);
+
+            if (ev == "BackgroundDiagnosticStatus")
+                OnDiagnosticStatus(parsed);
+            else if (ev == "ProjectDiagnosticStatus")
+                OnProjectStatus(parsed);
+            else if (ev != "log")
                 Debug.WriteLine(ev);
         }
     }
@@ -110,6 +130,8 @@ cts.Cancel();
 await outputThread;
 
 proc.Close();
+
+// counters?.Close();
 
 void OnProjectInit(AllData parsed)
 {
@@ -151,6 +173,8 @@ void OnDiagnosticStatus(AllData parsed)
     if (numberFilesRemaining == null)
         throw new InvalidOperationException("Null files remaining");
 
+    Debug.WriteLine($"Files remaining: {numberFilesRemaining}");
+
     if (numberFilesRemaining == 0 && hasPrasedSolution && solutionLoadTimer.IsRunning)
     {
         solutionLoadTimer.Stop();
@@ -163,6 +187,12 @@ void OnDiagnosticStatus(AllData parsed)
 
     if (numberFilesRemaining > 0)
         hasPrasedSolution = true;
+}
+
+void OnProjectStatus(AllData parsed)
+{
+    if (parsed.Body.ProjectFilePath != null)
+        Debug.WriteLine("Progress: " + parsed.Body.ProjectFilePath);
 }
 
 void RequestCodeCheck()
@@ -222,9 +252,6 @@ void OpenFile()
 
 void OnDiagnostic(AllData parsed)
 {
-    if (!fileChangeDiagnosticTimer.IsRunning)
-        return;
-
     var fileNames = parsed.Body.Results.Select(x => x.FileName).ToArray();
 
     if (fileNames != null)
@@ -233,14 +260,25 @@ void OnDiagnostic(AllData parsed)
         {
             if (fileName == TargetFileName)
             {
-                Console.WriteLine("Diagnostic: " + fileChangeDiagnosticTimer.Elapsed);
-
-                fileChangeDiagnosticTimer.Stop();
-
-                if (--testsRemaining == 0)
-                    cts.Cancel();
+                if (!fileChangeDiagnosticTimer.IsRunning)
+                {
+                    Console.WriteLine("Diagnostic");
+                }
                 else
-                    ChangeFile();
+                {
+                    Console.WriteLine("Diagnostic: " + fileChangeDiagnosticTimer.Elapsed);
+
+                    if (++currentDiagnosticCount == ExpectedDiagnosticCount)
+                    {
+                        currentDiagnosticCount = 0;
+                        fileChangeDiagnosticTimer.Stop();
+
+                        if (--testsRemaining == 0)
+                            cts.Cancel();
+                        else
+                            ChangeFile();
+                    }
+                }
             }
         }
     }
@@ -259,6 +297,7 @@ class AllDataBody
     public AllDataBodyResults[]? Results { get; set; }
     public MSBuildProject? MsBuildProject { get; set; }
     public string? FileName { get; set; }
+    public string? ProjectFilePath { get; set; }
 }
 
 class AllDataBodyResults
